@@ -55,9 +55,30 @@ function isTokenExpired($createdTime) {
 // Handle user operations
 if ($method === 'POST' && isset($data['action'])) {
     $action = $data['action'];
-    
+
     switch ($action) {
-        // Other actions (create, update_password, delete) remain the same...
+        case 'create': // Create a new user
+            $username = $data['username'] ?? null;
+            $email = $data['email'] ?? null;
+            $password = $data['password'] ?? null;
+
+            if (!$username || !$email || !$password) {
+                sendResponse('error', 'Missing required fields: username, email, or password.');
+            }
+
+            // Hash the password
+            $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+
+            // Insert user into the database
+            $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+            $stmt->bind_param('sss', $username, $email, $hashedPassword);
+
+            if ($stmt->execute()) {
+                sendResponse('success', 'User created successfully.');
+            } else {
+                sendResponse('error', 'Error creating user.');
+            }
+            break;
 
         case 'login': // Check user login and manage token
             $email = $data['email'] ?? null;
@@ -67,7 +88,7 @@ if ($method === 'POST' && isset($data['action'])) {
                 sendResponse('error', 'Missing required fields: email or password.');
             }
 
-            $stmt = $conn->prepare("SELECT id, username, email, password, created_at, updated_at FROM users WHERE email = ?");
+            $stmt = $conn->prepare("SELECT id, username, email, password FROM users WHERE email = ?");
             $stmt->bind_param('s', $email);
             $stmt->execute();
             $result = $stmt->get_result();
@@ -88,24 +109,20 @@ if ($method === 'POST' && isset($data['action'])) {
                     if ($tokenResult->num_rows > 0) {
                         $existingToken = $tokenResult->fetch_assoc();
                         if (!isTokenExpired($existingToken['created_at'])) {
-                            // Token is still valid
                             $token = $existingToken['token'];
                         } else {
-                            // Token expired, create a new one
                             $token = generateToken($userId);
                             $stmtInsertToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
                             $stmtInsertToken->bind_param('is', $userId, $token);
                             $stmtInsertToken->execute();
                         }
                     } else {
-                        // No token exists, create a new one
                         $token = generateToken($userId);
                         $stmtInsertToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
                         $stmtInsertToken->bind_param('is', $userId, $token);
                         $stmtInsertToken->execute();
                     }
 
-                    // Remove the password field before sending response
                     unset($user['password']);
                     $user['token'] = $token;
                     sendResponse('success', 'Login successful.', $user);
@@ -114,6 +131,61 @@ if ($method === 'POST' && isset($data['action'])) {
                 }
             } else {
                 sendResponse('error', 'Invalid email or password.');
+            }
+            break;
+
+        case 'update_password': // Update user password
+            $userId = $data['user_id'] ?? null;
+            $oldPassword = $data['old_password'] ?? null;
+            $newPassword = $data['new_password'] ?? null;
+
+            if (!$userId || !$oldPassword || !$newPassword) {
+                sendResponse('error', 'Missing required fields: user_id, old_password, or new_password.');
+            }
+
+            $stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $result = $stmt->get_result();
+
+            if ($result->num_rows > 0) {
+                $user = $result->fetch_assoc();
+
+                // Verify the old password
+                if (password_verify($oldPassword, $user['password'])) {
+                    $hashedNewPassword = password_hash($newPassword, PASSWORD_BCRYPT);
+
+                    // Update the password
+                    $stmtUpdate = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+                    $stmtUpdate->bind_param('si', $hashedNewPassword, $userId);
+
+                    if ($stmtUpdate->execute()) {
+                        sendResponse('success', 'Password updated successfully.');
+                    } else {
+                        sendResponse('error', 'Error updating password.');
+                    }
+                } else {
+                    sendResponse('error', 'Invalid old password.');
+                }
+            } else {
+                sendResponse('error', 'User not found.');
+            }
+            break;
+
+        case 'delete': // Delete a user
+            $userId = $data['user_id'] ?? null;
+
+            if (!$userId) {
+                sendResponse('error', 'Missing required field: user_id.');
+            }
+
+            $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
+            $stmt->bind_param('i', $userId);
+
+            if ($stmt->execute()) {
+                sendResponse('success', 'User deleted successfully.');
+            } else {
+                sendResponse('error', 'Error deleting user.');
             }
             break;
 
