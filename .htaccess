@@ -1,0 +1,18 @@
+# Enable mod_rewrite
+RewriteEngine On
+
+# Remove .php extension
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.php -f
+RewriteRule ^(.*)$ $1.php [L]
+
+# Handle directories and subfolders
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+?)/?$ $1.php [L]
+
+
+<Files ".env">
+    Order Allow,Deny
+    Deny from all
+</Files>
