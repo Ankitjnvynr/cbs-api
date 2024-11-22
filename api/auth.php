@@ -39,9 +39,17 @@ function sendResponse($status, $message, $data = null) {
     exit;
 }
 
-// Function to generate a token
+// Function to generate a new token
 function generateToken($userId) {
     return hash('sha256', $userId . time() . rand());
+}
+
+// Function to check if an existing token is still valid
+function isTokenExpired($createdTime) {
+    $currentTime = time();
+    $tokenTime = strtotime($createdTime);
+    $expirationTime = 7 * 24 * 60 * 60; // 7 days in seconds
+    return ($currentTime - $tokenTime) > $expirationTime;
 }
 
 // Handle user operations
@@ -51,7 +59,7 @@ if ($method === 'POST' && isset($data['action'])) {
     switch ($action) {
         // Other actions (create, update_password, delete) remain the same...
 
-        case 'login': // Check user login and generate token
+        case 'login': // Check user login and manage token
             $email = $data['email'] ?? null;
             $password = $data['password'] ?? null;
 
@@ -69,21 +77,38 @@ if ($method === 'POST' && isset($data['action'])) {
 
                 // Verify the password
                 if (password_verify($password, $user['password'])) {
-                    // Generate a token
-                    $token = generateToken($user['id']);
+                    $userId = $user['id'];
 
-                    // Store the token in the database
-                    $stmtToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
-                    $stmtToken->bind_param('is', $user['id'], $token);
+                    // Check if a valid token exists
+                    $stmtToken = $conn->prepare("SELECT token, created_at FROM tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 1");
+                    $stmtToken->bind_param('i', $userId);
+                    $stmtToken->execute();
+                    $tokenResult = $stmtToken->get_result();
 
-                    if ($stmtToken->execute()) {
-                        // Remove the password field before sending response
-                        unset($user['password']);
-                        $user['token'] = $token;
-                        sendResponse('success', 'Login successful.', $user);
+                    if ($tokenResult->num_rows > 0) {
+                        $existingToken = $tokenResult->fetch_assoc();
+                        if (!isTokenExpired($existingToken['created_at'])) {
+                            // Token is still valid
+                            $token = $existingToken['token'];
+                        } else {
+                            // Token expired, create a new one
+                            $token = generateToken($userId);
+                            $stmtInsertToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
+                            $stmtInsertToken->bind_param('is', $userId, $token);
+                            $stmtInsertToken->execute();
+                        }
                     } else {
-                        sendResponse('error', 'Error storing token.', $conn->error);
+                        // No token exists, create a new one
+                        $token = generateToken($userId);
+                        $stmtInsertToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
+                        $stmtInsertToken->bind_param('is', $userId, $token);
+                        $stmtInsertToken->execute();
                     }
+
+                    // Remove the password field before sending response
+                    unset($user['password']);
+                    $user['token'] = $token;
+                    sendResponse('success', 'Login successful.', $user);
                 } else {
                     sendResponse('error', 'Invalid email or password.');
                 }
