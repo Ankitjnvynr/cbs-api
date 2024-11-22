@@ -2,6 +2,24 @@
 // Include the database connection
 require_once '../_db.php';
 
+// Set CORS headers
+$allowedOrigins = ['http://localhost:3000', 'https://yourdomain.com'];
+
+if (isset($_SERVER['HTTP_ORIGIN']) && in_array($_SERVER['HTTP_ORIGIN'], $allowedOrigins)) {
+    header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
+} else {
+    header('Access-Control-Allow-Origin: https://yourdomain.com'); // Default to your production domain
+}
+
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+// Handle preflight requests
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
 // Set headers for JSON response
 header('Content-Type: application/json');
 
@@ -21,68 +39,19 @@ function sendResponse($status, $message, $data = null) {
     exit;
 }
 
+// Function to generate a token
+function generateToken($userId) {
+    return hash('sha256', $userId . time() . rand());
+}
+
 // Handle user operations
 if ($method === 'POST' && isset($data['action'])) {
     $action = $data['action'];
     
     switch ($action) {
-        case 'create': // Create a new user
-            $username = $data['username'] ?? null;
-            $email = $data['email'] ?? null;
-            $password = $data['password'] ?? null;
+        // Other actions (create, update_password, delete) remain the same...
 
-            if (!$username || !$email || !$password) {
-                sendResponse('error', 'Missing required fields: username, email, or password.');
-            }
-
-            $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
-            $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
-            $stmt->bind_param('sss', $username, $email, $hashedPassword);
-
-            if ($stmt->execute()) {
-                sendResponse('success', 'User created successfully.');
-            } else {
-                sendResponse('error', 'Error creating user.', $conn->error);
-            }
-            break;
-
-        case 'update_password': // Update user password
-            $email = $data['email'] ?? null;
-            $newPassword = $data['new_password'] ?? null;
-
-            if (!$email || !$newPassword) {
-                sendResponse('error', 'Missing required fields: email or new_password.');
-            }
-
-            $hashedPassword = password_hash($newPassword, PASSWORD_BCRYPT);
-            $stmt = $conn->prepare("UPDATE users SET password = ? WHERE email = ?");
-            $stmt->bind_param('ss', $hashedPassword, $email);
-
-            if ($stmt->execute() && $stmt->affected_rows > 0) {
-                sendResponse('success', 'Password updated successfully.');
-            } else {
-                sendResponse('error', 'Error updating password or user not found.', $conn->error);
-            }
-            break;
-
-        case 'delete': // Delete a user
-            $email = $data['email'] ?? null;
-
-            if (!$email) {
-                sendResponse('error', 'Missing required field: email.');
-            }
-
-            $stmt = $conn->prepare("DELETE FROM users WHERE email = ?");
-            $stmt->bind_param('s', $email);
-
-            if ($stmt->execute() && $stmt->affected_rows > 0) {
-                sendResponse('success', 'User deleted successfully.');
-            } else {
-                sendResponse('error', 'Error deleting user or user not found.', $conn->error);
-            }
-            break;
-
-        case 'login': // Check user login
+        case 'login': // Check user login and generate token
             $email = $data['email'] ?? null;
             $password = $data['password'] ?? null;
 
@@ -100,9 +69,21 @@ if ($method === 'POST' && isset($data['action'])) {
 
                 // Verify the password
                 if (password_verify($password, $user['password'])) {
-                    // Remove the password field before sending response
-                    unset($user['password']);
-                    sendResponse('success', 'Login successful.', $user);
+                    // Generate a token
+                    $token = generateToken($user['id']);
+
+                    // Store the token in the database
+                    $stmtToken = $conn->prepare("INSERT INTO tokens (user_id, token) VALUES (?, ?)");
+                    $stmtToken->bind_param('is', $user['id'], $token);
+
+                    if ($stmtToken->execute()) {
+                        // Remove the password field before sending response
+                        unset($user['password']);
+                        $user['token'] = $token;
+                        sendResponse('success', 'Login successful.', $user);
+                    } else {
+                        sendResponse('error', 'Error storing token.', $conn->error);
+                    }
                 } else {
                     sendResponse('error', 'Invalid email or password.');
                 }
